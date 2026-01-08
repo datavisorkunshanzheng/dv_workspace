@@ -172,6 +172,70 @@ New entity status: `AI_DRAFT` (in addition to DRAFT, PUBLISHED, HIDDEN, ARCHIVED
 | FeatureController (AI) | `feature-platform/api/src/main/java/com/datavisor/fp/controller/FeatureController.java` |
 | MultipleVersionEntityController | `feature-platform/api/src/main/java/com/datavisor/fp/controller/MultipleVersionEntityController.java` |
 
+### 2.5 RAG Indexing
+
+#### Manual Indexing APIs
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /admin/rag/internal/{FEATURE\|RULE}/register` | Register entity schema (one-time) |
+| `POST /{tenant}/rag/internal/{FEATURE\|RULE}/reindex-all` | Reindex all entities for tenant |
+| `DELETE /admin/rag/internal/delete-all` | Delete all RAG registrations + changelog records |
+
+#### Automatic Indexing via DVChangelog
+
+On FP startup or tenant creation, `DVChangelogService.maybeExecuteActions()` runs registered changelogs:
+
+```
+activeChangelogNames = [
+    ...
+    REGISTER_AND_INDEX_FEATURE_IN_RAG,  // register_and_index_feature_in_rag
+    REGISTER_AND_INDEX_RULE_IN_RAG,     // register_and_index_rule_in_rag
+    ...
+]
+```
+
+**Trigger Points**:
+1. **FP Startup** (`EntityRepositories.java:6310`) - for each tenant, only on consumer FP instances
+2. **Tenant Creation** (`TenantService.java:308`) - immediate execution for new tenants
+
+**Execution Logic** (`DVChangelogService.java:291-314`):
+```java
+// 1. Check if already executed (idempotent)
+Boolean newlyCreated = daoManager.checkOrCreateDVChangelogByName(recordName);
+if (!newlyCreated) return;  // Skip if already run
+
+// 2. Execute action
+executeOneAction(actionName);
+
+// 3. Mark completed (or delete record on failure to retry later)
+daoManager.updatedStatusForDVChangelogByName(recordName, COMPLETED);
+```
+
+**RAG Indexing Actions** (`DVChangelogService.java:1229-1249`):
+```java
+registerAndIndexFeatureInRag() {
+    ragBuiltInService.registerFeatureEntity();    // Create schema + Milvus collection
+    ragBuiltInService.deleteAllFeatureIndexes();  // Clear existing
+    ragBuiltInService.indexAllFeatures();         // Index all features
+}
+
+registerAndIndexRuleInRag() {
+    ragBuiltInService.registerRuleEntity();
+    ragBuiltInService.deleteAllRuleIndexes();
+    ragBuiltInService.indexAllRules();
+}
+```
+
+#### Indexing Key Files
+
+| File | Location |
+|------|----------|
+| RagBuiltInService | `feature-platform/feature/src/main/java/com/datavisor/rag/service/RagBuiltInService.java` |
+| RagBuiltInController | `feature-platform/api/src/main/java/com/datavisor/rag/controller/RagBuiltInController.java` |
+| RagIngestionService | `feature-platform/feature/src/main/java/com/datavisor/rag/service/RagIngestionService.java` |
+| DVChangelogService | `feature-platform/feature/src/main/java/com/datavisor/service/DVChangelogService.java` |
+
 ---
 
 ## 3. Integration Flow
