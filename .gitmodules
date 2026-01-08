@@ -1,0 +1,18 @@
+[submodule "feature-platform"]
+	path = feature-platform
+	url = git@github.com:datavisorcode/feature-platform.git
+[submodule "internal-ui"]
+	path = internal-ui
+	url = git@github.com:datavisorcode/internal-ui.git
+[submodule "ngsc"]
+	path = ngsc
+	url = git@github.com:datavisorcode/ngsc.git
+[submodule "qa-test"]
+	path = qa-test
+	url = git@github.com:datavisorcode/qa-test.git
+[submodule "charts"]
+	path = charts
+	url = git@github.com:datavisorcode/charts.git
+[submodule "infra"]
+	path = infra
+	url = git@github.com:datavisorcode/infra.git
