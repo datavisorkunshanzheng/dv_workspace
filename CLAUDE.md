@@ -11,6 +11,18 @@
 | **dv-e2e** | `qa-test/dv-e2e/` | Cucumber E2E tests |
 | **infra** | `infra/` | Infrastructure configs |
 
+## Feature-Platform Documentation
+
+| Document | Path | Description |
+|----------|------|-------------|
+| Hotspot Aggregation | `feature-platform/docs/hotspot-aggregation.md` | Hotspot triggering, backfill, and Flink batch synchronization |
+| Maven Test Runner | `feature-platform/MAVEN_TEST_RUNNER_README.md` | Automated retry logic for flaky Maven tests |
+| Local Manual Setup | `feature-platform/tools/src/main/localsetup/local-manual-setup/README.md` | Local dev environment setup (MySQL, Kafka, YugabyteDB, etc.) |
+| FP Deps Docker Compose | `feature-platform/tools/src/main/localsetup/external-yuga-setup/README.md` | Docker Compose for FP dependencies with profiles |
+| Docker Compose Deploy | `feature-platform/tools/src/main/docker-compose/README.md` | Legacy Docker Compose deployment |
+| Standalone ITest | `feature-platform/itest/STANDALONE.md` | Building integration tests as standalone JAR |
+| Cassandra Helm Chart | `feature-platform/tools/src/main/charts/dv-cassandra/README.md` | Kubernetes Cassandra StatefulSet deployment |
+
 ---
 
 # AI Agent Framework Architecture
@@ -235,6 +247,10 @@ registerAndIndexRuleInRag() {
 | RagBuiltInController | `feature-platform/api/src/main/java/com/datavisor/rag/controller/RagBuiltInController.java` |
 | RagIngestionService | `feature-platform/feature/src/main/java/com/datavisor/rag/service/RagIngestionService.java` |
 | DVChangelogService | `feature-platform/feature/src/main/java/com/datavisor/service/DVChangelogService.java` |
+
+### 2.6 Hotspot Aggregation System
+
+Pre-compute velocity aggregations for high-cardinality dimensions. See [detailed documentation](feature-platform/docs/hotspot-aggregation.md).
 
 ---
 
