@@ -16,3 +16,6 @@ Thumbs.db
 # Local config
 .env
 .env.local
+
+# Session worktree directories (created by worktree script)
+WT__*/

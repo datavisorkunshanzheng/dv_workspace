@@ -1,0 +1,720 @@
+#!/bin/bash
+# worktree - Manage git worktree sessions for multi-repo development
+#
+# Usage: worktree <command> [options]
+#
+# Commands:
+#   new      Create a new session with worktrees
+#   add      Add a repo to an existing session
+#   remove   Remove a repo from a session
+#   clean    Remove a session and its worktrees
+#   list     List all sessions or repos in a session
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+#######################################
+# Help functions
+#######################################
+
+show_help() {
+    cat << EOF
+Usage: worktree <command> [options]
+
+Manage git worktree sessions for multi-repo development.
+
+Commands:
+  new       Create a new session with worktrees
+  add       Add a repo to an existing session
+  remove    Remove a repo from a session
+  clean     Remove a session and its worktrees
+  list      List all sessions or repos in a session
+
+Run 'worktree <command> --help' for more information on a command.
+
+Examples:
+  worktree new -b DV.202602A.External hotfix1 feature-platform qa-test
+  worktree add hotfix1 internal-ui
+  worktree remove hotfix1 qa-test
+  worktree list
+  worktree list hotfix1
+  worktree clean hotfix1
+  worktree clean hotfix1 --delete-branches
+EOF
+}
+
+show_new_help() {
+    cat << EOF
+Usage: worktree new -b <base_branch> <session_name> <repo1> [repo2] ...
+
+Create a new session directory with git worktrees for specified repos.
+
+Options:
+  -b, --base <branch>   Base branch to create worktrees from (required)
+  -h, --help            Show this help message
+
+Arguments:
+  session_name          Name of the session/task (e.g., hotfix1, chatagent)
+  repo1, repo2, ...     Repos to include in the session
+
+Examples:
+  worktree new -b DV.202602A.External hotfix1 feature-platform qa-test
+  worktree new --base master chatagent qa-test
+
+This creates:
+  - Directory: ./WT__<session_name>/
+  - Worktrees: ./WT__<session_name>/<repo>/
+  - Branches:  <base_branch>.<session_name>
+EOF
+}
+
+show_add_help() {
+    cat << EOF
+Usage: worktree add <session_name> <repo1> [repo2] ...
+
+Add repos to an existing session.
+
+Options:
+  -b, --base <branch>   Override base branch (default: uses session's branch pattern)
+  -h, --help            Show this help message
+
+Arguments:
+  session_name          Name of the existing session
+  repo1, repo2, ...     Repos to add to the session
+
+Examples:
+  worktree add hotfix1 internal-ui
+  worktree add hotfix1 qa-test ngsc
+  worktree add hotfix1 -b DV.202602A.External internal-ui
+EOF
+}
+
+show_remove_help() {
+    cat << EOF
+Usage: worktree remove <session_name> <repo1> [repo2] ...
+
+Remove repos from a session.
+
+Options:
+  --delete-branch       Also delete the branch (default: keep branch)
+  -h, --help            Show this help message
+
+Arguments:
+  session_name          Name of the session
+  repo1, repo2, ...     Repos to remove from the session
+
+Examples:
+  worktree remove hotfix1 qa-test
+  worktree remove hotfix1 qa-test --delete-branch
+EOF
+}
+
+show_clean_help() {
+    cat << EOF
+Usage: worktree clean <session_name> [options]
+
+Remove a session and all its worktrees.
+
+Options:
+  --delete-branches     Also delete the branches (default: keep branches)
+  -h, --help            Show this help message
+
+Arguments:
+  session_name          Name of the session to clean up
+
+Examples:
+  worktree clean hotfix1
+  worktree clean hotfix1 --delete-branches
+EOF
+}
+
+show_list_help() {
+    cat << EOF
+Usage: worktree list [session_name]
+
+List all sessions, or repos in a specific session.
+
+Options:
+  -h, --help            Show this help message
+
+Arguments:
+  session_name          Optional. If provided, list repos in that session.
+                        If omitted, list all sessions.
+
+Examples:
+  worktree list              # List all sessions
+  worktree list hotfix1      # List repos in hotfix1 session
+EOF
+}
+
+#######################################
+# Utility functions
+#######################################
+
+error() {
+    echo -e "${RED}Error: $1${NC}" >&2
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}Warning: $1${NC}" >&2
+}
+
+info() {
+    echo -e "${GREEN}$1${NC}"
+}
+
+status() {
+    echo -e "${YELLOW}$1${NC}"
+}
+
+# Session directory prefix
+SESSION_PREFIX="WT__"
+
+# Check if a directory is a git repo
+is_git_repo() {
+    local dir="$1"
+    [ -d "$dir/.git" ] || [ -f "$dir/.git" ]
+}
+
+# Get session directory path with prefix
+get_session_dir() {
+    local session_name="$1"
+    echo "${SCRIPT_DIR}/${SESSION_PREFIX}${session_name}"
+}
+
+# Get branch name from a worktree directory
+get_branch_name() {
+    local dir="$1"
+    cd "$dir" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ""
+}
+
+# Detect base branch from existing session
+detect_base_branch() {
+    local session_dir="$1"
+    local session_name="$2"
+
+    for repo_dir in "$session_dir"/*/; do
+        if [ -d "$repo_dir" ]; then
+            local branch=$(get_branch_name "$repo_dir")
+            if [ -n "$branch" ]; then
+                # Remove .<session_name> suffix to get base branch
+                echo "${branch%.$session_name}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# Create a worktree for a repo
+create_worktree() {
+    local repo_name="$1"
+    local session_name="$2"
+    local base_branch="$3"
+    local session_dir="$4"
+
+    local repo_path="${SCRIPT_DIR}/${repo_name}"
+    local worktree_path="${session_dir}/${repo_name}"
+    local new_branch="${base_branch}.${session_name}"
+
+    # Check if repo exists
+    if [ ! -d "$repo_path" ]; then
+        error "Repository '$repo_path' not found."
+    fi
+
+    # Check if it's a git repo
+    if ! is_git_repo "$repo_path"; then
+        error "'$repo_path' is not a git repository."
+    fi
+
+    # Check if worktree already exists
+    if [ -d "$worktree_path" ]; then
+        error "Worktree '$worktree_path' already exists."
+    fi
+
+    status "Creating worktree for ${repo_name}..."
+    echo "  Base branch: ${base_branch}"
+    echo "  New branch:  ${new_branch}"
+    echo "  Worktree:    ${worktree_path}"
+
+    cd "$repo_path"
+
+    # Check if base branch exists (only if creating new branch)
+    if ! git show-ref --verify --quiet "refs/heads/$new_branch"; then
+        if ! git show-ref --verify --quiet "refs/heads/$base_branch" && \
+           ! git show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
+            error "Base branch '$base_branch' not found in ${repo_name}."
+        fi
+    fi
+
+    # Fetch latest from remote if base branch is remote
+    if git show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
+        echo "  Fetching latest from origin..."
+        git fetch origin "$base_branch" 2>/dev/null || true
+    fi
+
+    # Check if target branch already exists
+    if git show-ref --verify --quiet "refs/heads/$new_branch"; then
+        echo "  Branch '$new_branch' already exists, using existing branch"
+        git worktree add "$worktree_path" "$new_branch"
+    else
+        # Create new branch based on base branch
+        if git show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
+            git worktree add -b "$new_branch" "$worktree_path" "origin/$base_branch"
+        else
+            git worktree add -b "$new_branch" "$worktree_path" "$base_branch"
+        fi
+    fi
+
+    info "  ✓ Created worktree for ${repo_name}"
+}
+
+# Remove a worktree for a repo
+remove_worktree() {
+    local repo_name="$1"
+    local session_dir="$2"
+    local delete_branch="$3"
+
+    local repo_path="${SCRIPT_DIR}/${repo_name}"
+    local worktree_path="${session_dir}/${repo_name}"
+
+    if [ ! -d "$worktree_path" ]; then
+        warn "Worktree '$worktree_path' not found, skipping."
+        return 0
+    fi
+
+    status "Removing worktree: ${worktree_path}"
+
+    # Get branch name before removing
+    local branch_name=$(get_branch_name "$worktree_path")
+
+    if [ -d "$repo_path" ]; then
+        cd "$repo_path"
+        git worktree remove "$worktree_path" --force 2>/dev/null || {
+            warn "Worktree already removed or not found, cleaning up directory..."
+            rm -rf "$worktree_path"
+        }
+        git worktree prune 2>/dev/null || true
+    else
+        rm -rf "$worktree_path"
+    fi
+
+    info "  ✓ Removed worktree for ${repo_name}"
+
+    # Delete branch if requested
+    if [ "$delete_branch" = "true" ] && [ -n "$branch_name" ] && [ "$branch_name" != "HEAD" ]; then
+        if [ -d "$repo_path" ]; then
+            cd "$repo_path"
+            if git show-ref --verify --quiet "refs/heads/$branch_name"; then
+                git branch -D "$branch_name" 2>/dev/null && \
+                    info "  ✓ Deleted branch '$branch_name'" || \
+                    warn "  Failed to delete branch '$branch_name'"
+            fi
+        fi
+    fi
+}
+
+#######################################
+# Command: new
+#######################################
+
+cmd_new() {
+    local base_branch=""
+    local session_name=""
+    local repos=()
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                show_new_help
+                exit 0
+                ;;
+            -b|--base)
+                base_branch="$2"
+                shift 2
+                ;;
+            -*)
+                error "Unknown option: $1\nRun 'worktree new --help' for usage."
+                ;;
+            *)
+                if [ -z "$session_name" ]; then
+                    session_name="$1"
+                else
+                    repos+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate arguments
+    [ -z "$base_branch" ] && error "Base branch is required. Use -b <branch>.\nRun 'worktree new --help' for usage."
+    [ -z "$session_name" ] && error "Session name is required.\nRun 'worktree new --help' for usage."
+    [ ${#repos[@]} -eq 0 ] && error "At least one repo is required.\nRun 'worktree new --help' for usage."
+
+    local session_dir="$(get_session_dir "$session_name")"
+    local new_branch="${base_branch}.${session_name}"
+
+    # Check if session already exists
+    if [ -d "$session_dir" ]; then
+        error "Session directory '$session_dir' already exists.\nUse 'worktree add $session_name <repo>' to add repos, or 'worktree clean $session_name' to remove it."
+    fi
+
+    # Create session directory
+    info "Creating session directory: ${session_dir}"
+    mkdir -p "$session_dir"
+
+    # Create worktrees for each repo
+    for repo in "${repos[@]}"; do
+        create_worktree "$repo" "$session_name" "$base_branch" "$session_dir" || {
+            warn "Failed to create worktree for $repo, cleaning up..."
+            rm -rf "$session_dir"
+            exit 1
+        }
+    done
+
+    echo ""
+    info "Session '$session_name' created successfully!"
+    echo ""
+    echo "Branch: ${new_branch}"
+    echo ""
+    echo "Worktrees created:"
+    for repo in "${repos[@]}"; do
+        echo "  ${session_dir}/${repo}/"
+    done
+    echo ""
+    echo "To add more repos:"
+    echo "  worktree add $session_name <repo>"
+    echo ""
+    echo "To remove this session later:"
+    echo "  worktree clean $session_name"
+    echo ""
+    echo "To start Claude in this session:"
+    echo "  claude \"Work in $session_name session\""
+}
+
+#######################################
+# Command: add
+#######################################
+
+cmd_add() {
+    local base_branch=""
+    local session_name=""
+    local repos=()
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                show_add_help
+                exit 0
+                ;;
+            -b|--base)
+                base_branch="$2"
+                shift 2
+                ;;
+            -*)
+                error "Unknown option: $1\nRun 'worktree add --help' for usage."
+                ;;
+            *)
+                if [ -z "$session_name" ]; then
+                    session_name="$1"
+                else
+                    repos+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate arguments
+    [ -z "$session_name" ] && error "Session name is required.\nRun 'worktree add --help' for usage."
+    [ ${#repos[@]} -eq 0 ] && error "At least one repo is required.\nRun 'worktree add --help' for usage."
+
+    local session_dir="$(get_session_dir "$session_name")"
+
+    # Check if session exists
+    if [ ! -d "$session_dir" ]; then
+        error "Session '$session_name' not found.\nUse 'worktree new -b <base_branch> $session_name <repos>' to create it."
+    fi
+
+    # Detect base branch if not provided
+    if [ -z "$base_branch" ]; then
+        base_branch=$(detect_base_branch "$session_dir" "$session_name")
+        if [ -z "$base_branch" ]; then
+            error "Could not detect base branch. Please specify with -b <branch>."
+        fi
+        echo "Detected base branch: $base_branch"
+    fi
+
+    # Create worktrees for each repo
+    for repo in "${repos[@]}"; do
+        create_worktree "$repo" "$session_name" "$base_branch" "$session_dir"
+    done
+
+    echo ""
+    info "Added repos to session '$session_name' successfully!"
+}
+
+#######################################
+# Command: remove
+#######################################
+
+cmd_remove() {
+    local session_name=""
+    local repos=()
+    local delete_branch="false"
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                show_remove_help
+                exit 0
+                ;;
+            --delete-branch)
+                delete_branch="true"
+                shift
+                ;;
+            -*)
+                error "Unknown option: $1\nRun 'worktree remove --help' for usage."
+                ;;
+            *)
+                if [ -z "$session_name" ]; then
+                    session_name="$1"
+                else
+                    repos+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate arguments
+    [ -z "$session_name" ] && error "Session name is required.\nRun 'worktree remove --help' for usage."
+    [ ${#repos[@]} -eq 0 ] && error "At least one repo is required.\nRun 'worktree remove --help' for usage."
+
+    local session_dir="$(get_session_dir "$session_name")"
+
+    # Check if session exists
+    if [ ! -d "$session_dir" ]; then
+        error "Session '$session_name' not found."
+    fi
+
+    # Remove worktrees for each repo
+    for repo in "${repos[@]}"; do
+        remove_worktree "$repo" "$session_dir" "$delete_branch"
+    done
+
+    # Check if session is empty
+    if [ -z "$(ls -A "$session_dir" 2>/dev/null)" ]; then
+        rm -rf "$session_dir"
+        info "Session directory was empty and has been removed."
+    fi
+
+    echo ""
+    info "Removed repos from session '$session_name' successfully!"
+}
+
+#######################################
+# Command: clean
+#######################################
+
+cmd_clean() {
+    local session_name=""
+    local delete_branches="false"
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                show_clean_help
+                exit 0
+                ;;
+            --delete-branches)
+                delete_branches="true"
+                shift
+                ;;
+            -*)
+                error "Unknown option: $1\nRun 'worktree clean --help' for usage."
+                ;;
+            *)
+                session_name="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Validate arguments
+    [ -z "$session_name" ] && error "Session name is required.\nRun 'worktree clean --help' for usage."
+
+    local session_dir="$(get_session_dir "$session_name")"
+
+    # Check if session exists
+    if [ ! -d "$session_dir" ]; then
+        error "Session '$session_name' not found."
+    fi
+
+    status "Cleaning up session: ${session_name}"
+
+    # Remove all worktrees in the session
+    for worktree_dir in "$session_dir"/*/; do
+        if [ -d "$worktree_dir" ]; then
+            local repo_name=$(basename "$worktree_dir")
+            remove_worktree "$repo_name" "$session_dir" "$delete_branches"
+        fi
+    done
+
+    # Prune worktrees in all repos
+    status "Pruning stale worktree references..."
+    for repo_dir in "$SCRIPT_DIR"/*/; do
+        if is_git_repo "$repo_dir"; then
+            cd "$repo_dir"
+            git worktree prune 2>/dev/null || true
+        fi
+    done
+
+    # Remove session directory
+    if [ -d "$session_dir" ]; then
+        rm -rf "$session_dir"
+        info "✓ Removed session directory: ${session_dir}"
+    fi
+
+    echo ""
+    info "Session '$session_name' cleaned up successfully!"
+
+    if [ "$delete_branches" = "false" ]; then
+        echo ""
+        echo "Note: Branches were kept. To also delete branches, run:"
+        echo "  worktree clean $session_name --delete-branches"
+    fi
+}
+
+#######################################
+# Command: list
+#######################################
+
+cmd_list() {
+    local session_name=""
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                show_list_help
+                exit 0
+                ;;
+            -*)
+                error "Unknown option: $1\nRun 'worktree list --help' for usage."
+                ;;
+            *)
+                session_name="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$session_name" ]; then
+        # List all sessions
+        echo -e "${BLUE}Sessions:${NC}"
+        local found=false
+        for dir in "$SCRIPT_DIR"/${SESSION_PREFIX}*/; do
+            if [ -d "$dir" ]; then
+                local full_name=$(basename "$dir")
+                # Remove the prefix from display name
+                local name="${full_name#$SESSION_PREFIX}"
+                # Check if it's a session (contains worktrees, not a main repo)
+                if [ -d "$dir" ] && ! is_git_repo "$dir"; then
+                    # Check if it contains any git worktrees
+                    for subdir in "$dir"/*/; do
+                        if [ -d "$subdir" ] && is_git_repo "$subdir"; then
+                            echo "  $name"
+                            found=true
+                            break
+                        fi
+                    done
+                fi
+            fi
+        done
+        if [ "$found" = "false" ]; then
+            echo "  (no sessions found)"
+        fi
+    else
+        # List repos in a session
+        local session_dir="$(get_session_dir "$session_name")"
+
+        if [ ! -d "$session_dir" ]; then
+            error "Session '$session_name' not found."
+        fi
+
+        echo -e "${BLUE}Session: ${session_name}${NC}"
+        echo ""
+
+        local found=false
+        for worktree_dir in "$session_dir"/*/; do
+            if [ -d "$worktree_dir" ]; then
+                local repo_name=$(basename "$worktree_dir")
+                local branch=$(get_branch_name "$worktree_dir")
+                echo "  ${repo_name}/"
+                echo "    Branch: ${branch}"
+                echo "    Path:   ${worktree_dir}"
+                found=true
+            fi
+        done
+
+        if [ "$found" = "false" ]; then
+            echo "  (no repos in session)"
+        fi
+    fi
+}
+
+#######################################
+# Main
+#######################################
+
+main() {
+    if [ $# -eq 0 ]; then
+        show_help
+        exit 0
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        new)
+            cmd_new "$@"
+            ;;
+        add)
+            cmd_add "$@"
+            ;;
+        remove)
+            cmd_remove "$@"
+            ;;
+        clean)
+            cmd_clean "$@"
+            ;;
+        list|ls)
+            cmd_list "$@"
+            ;;
+        -h|--help|help)
+            show_help
+            exit 0
+            ;;
+        *)
+            error "Unknown command: $command\nRun 'worktree --help' for usage."
+            ;;
+    esac
+}
+
+main "$@"
