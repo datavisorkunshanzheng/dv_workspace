@@ -197,15 +197,22 @@ get_branch_name() {
     cd "$dir" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ""
 }
 
-# Copy .claude directory to session if it exists
+# Copy .claude directory and CLAUDE.md to session if they exist
 copy_claude_config() {
     local session_dir="$1"
     local claude_dir="${SCRIPT_DIR}/.claude"
+    local claude_md="${SCRIPT_DIR}/CLAUDE.md"
 
     if [ -d "$claude_dir" ]; then
         status "Copying .claude configuration to session..."
         cp -r "$claude_dir" "$session_dir/.claude"
         info "  ✓ Copied .claude configuration"
+    fi
+
+    if [ -f "$claude_md" ]; then
+        status "Copying CLAUDE.md to session..."
+        cp "$claude_md" "$session_dir/CLAUDE.md"
+        info "  ✓ Copied CLAUDE.md"
     fi
 }
 
