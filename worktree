@@ -197,6 +197,18 @@ get_branch_name() {
     cd "$dir" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ""
 }
 
+# Copy .claude directory to session if it exists
+copy_claude_config() {
+    local session_dir="$1"
+    local claude_dir="${SCRIPT_DIR}/.claude"
+
+    if [ -d "$claude_dir" ]; then
+        status "Copying .claude configuration to session..."
+        cp -r "$claude_dir" "$session_dir/.claude"
+        info "  ✓ Copied .claude configuration"
+    fi
+}
+
 # Detect base branch from existing session
 detect_base_branch() {
     local session_dir="$1"
@@ -373,6 +385,9 @@ cmd_new() {
     # Create session directory
     info "Creating session directory: ${session_dir}"
     mkdir -p "$session_dir"
+
+    # Copy .claude configuration
+    copy_claude_config "$session_dir"
 
     # Create worktrees for each repo
     for repo in "${repos[@]}"; do
