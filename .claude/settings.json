@@ -87,5 +87,10 @@
     ],
     "deny": [],
     "ask": []
+  },
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true
   }
 }
