@@ -7,11 +7,34 @@
 | Project | Path | Description |
 |---------|------|-------------|
 | **charts** | `charts/` | K8s Helm values (apiserver, dcluster, dv-liquibase, etc.) |
-| **feature-platform (fp)** | `feature-platform/` | Java 8 backend - feature metadata, rule-engine, RAG/Milvus |
+| **feature-platform (fp)** | `feature-platform/` | Java backend - feature metadata, rule-engine, RAG/Milvus (Java 17 since `DV.202602A.External`; Java 8 on `DV.202509C.External` and earlier) |
 | **api-server** | `internal-ui/api-server/` | Java 17 backend - case review, BI, AI chat agent framework |
 | **ngsc** | `ngsc/` | Node.js bridge service between frontend and backend |
 | **dv-e2e** | `qa-test/dv-e2e/` | Cucumber E2E tests |
 | **infra** | `infra/` | Infrastructure configs |
+
+## General Rules
+
+- When asked to **review or analyze code**, do NOT make changes unless explicitly asked. Separate review/analysis from implementation.
+- When splitting work across **multiple repositories**, confirm the target repo for each file/change BEFORE starting implementation. Do not put all changes in one repo by default.
+
+## SQL & Database
+
+When writing SQL queries against existing databases, ALWAYS query the database first to discover actual field values, enum values, project keys, and priorities before writing final queries. Never assume or hardcode values.
+
+## Build & Testing
+
+- **feature-platform**: Java 17 on branch `DV.202602A.External` and later; Java 8 on `DV.202509C.External` and earlier. Check the current branch before building.
+- **api-server**: Java 17.
+- Do not assume Java version, JVM arguments, or API availability without checking. Run `java -version` or inspect `pom.xml` before building.
+
+## Debugging & Bug Fixes
+
+Prefer simple fixes first. When debugging or fixing issues, propose the simplest possible solution before suggesting complex approaches with tracking sets, new data structures, or architectural changes.
+
+## AI Agent Prompts / Prompt Engineering
+
+Keep prompts and configuration modular. Never hardcode values (search keys, status values, entity names) into prompt files — query them dynamically or reference shared config. Ask before deciding where to place new content.
 
 ## Worktree Sessions
 
