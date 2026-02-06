@@ -27,6 +27,9 @@ When writing SQL queries against existing databases, ALWAYS query the database f
 - **feature-platform**: Java 17 on branch `DV.202602A.External` and later; Java 8 on `DV.202509C.External` and earlier. Check the current branch before building.
 - **api-server**: Java 17.
 - Do not assume Java version, JVM arguments, or API availability without checking. Run `java -version` or inspect `pom.xml` before building.
+- **SDKMAN** is installed. Use `sdk use java <version>` to switch:
+  - `sdk use java 17.0.17-amzn` (for feature-platform on `DV.202602A.External`+, api-server)
+  - `sdk use java 8.0.462-amzn` (for feature-platform on `DV.202509C.External` and earlier)
 
 ## Debugging & Bug Fixes
 
